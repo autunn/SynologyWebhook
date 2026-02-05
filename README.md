@@ -1,0 +1,2 @@
+# SynologyWebhook
+用于群晖webhook发送通知到企业微信
