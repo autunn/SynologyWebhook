@@ -2,60 +2,79 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Synology Webhook Pro</title>
+    <title>Synology Webhook Max</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         body {
-            background: url('https://picsum.photos/1920/1080') no-repeat center center fixed;
-            background-size: cover;
-            height: 100vh; margin: 0; display: flex; align-items: center; justify-content: center; font-family: sans-serif;
+            background: #f0f2f5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            height: 100vh; margin: 0; display: flex; align-items: center; justify-content: center;
         }
-        .card {
-            background: rgba(255, 255, 255, 0.9); padding: 40px; border-radius: 16px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.3); width: 360px; text-align: left;
+        .container {
+            background: white; padding: 30px; border-radius: 12px; width: 450px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1); overflow-y: auto; max-height: 90vh;
         }
-        h3 { text-align: center; color: #333; margin-top: 0; }
-        label { font-size: 12px; color: #666; font-weight: bold; margin-bottom: 4px; display: block; }
+        h2 { text-align: center; margin-bottom: 20px; color: #1a1a1a; }
+        .group { margin-bottom: 15px; }
+        label { display: block; font-size: 13px; font-weight: 600; color: #444; margin-bottom: 5px; }
         input {
-            width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #ddd;
-            border-radius: 6px; box-sizing: border-box; font-size: 14px;
+            width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px;
+            box-sizing: border-box; font-size: 14px;
         }
         button {
-            width: 100%; padding: 12px; background: #28a745; color: white;
+            width: 100%; padding: 12px; background: #007bff; color: white; font-weight: bold;
             border: none; border-radius: 6px; cursor: pointer; font-size: 16px; margin-top: 10px;
         }
-        button:hover { background: #218838; }
-        .success { color: #28a745; text-align: center; margin-bottom: 15px; font-weight: bold; }
-        .note { font-size: 11px; color: #888; margin-top: -10px; margin-bottom: 10px; }
+        .hint { font-size: 12px; color: #888; margin-top: -3px; margin-bottom: 5px; }
+        .success { background: #d4edda; color: #155724; padding: 10px; border-radius: 6px; margin-bottom: 15px; text-align: center; }
+        .required { color: red; margin-left: 3px; }
     </style>
 </head>
 <body>
-    <div class="card">
-        <h3>配置参数</h3>
-        {{if .success}}<div class="success">✅ 配置已保存！</div>{{end}}
+    <div class="container">
+        <h2>🚀 微信推送配置</h2>
+        {{if .success}}<div class="success">✅ 配置已保存！请去企业微信点击“保存”</div>{{end}}
         <form action="/save" method="post">
-            <label>企业ID (CorpID)</label>
-            <input type="text" name="corpid" value="{{.config.CorpID}}" required>
+            <div class="group">
+                <label>企业ID (CorpID)<span class="required">*</span></label>
+                <input type="text" name="corpid" value="{{.config.CorpID}}" required>
+            </div>
+            <div class="group">
+                <label>应用ID (AgentID)<span class="required">*</span></label>
+                <input type="text" name="agentid" value="{{.config.AgentID}}" required>
+            </div>
+            <div class="group">
+                <label>应用密钥 (Secret)<span class="required">*</span></label>
+                <input type="password" name="corpsecret" value="{{.config.CorpSecret}}" required>
+            </div>
+
+            <hr style="border:0; border-top:1px solid #eee; margin: 15px 0;">
+            <div class="group">
+                <label>接收消息 Token<span class="required">*</span></label>
+                <input type="text" name="token" value="{{.config.Token}}" placeholder="企业微信后台生成的 Token" required>
+                <div class="hint">用于验证回调 URL 的真实性</div>
+            </div>
+            <div class="group">
+                <label>接收消息 AESKey<span class="required">*</span></label>
+                <input type="text" name="encoding_aes_key" value="{{.config.EncodingAESKey}}" placeholder="企业微信后台生成的 EncodingAESKey" required>
+                <div class="hint">用于解密企业微信发来的验证请求</div>
+            </div>
+
+            <hr style="border:0; border-top:1px solid #eee; margin: 15px 0;">
             
-            <label>应用ID (AgentID)</label>
-            <input type="text" name="agentid" value="{{.config.AgentID}}" required>
-            
-            <label>应用密钥 (Secret)</label>
-            <input type="password" name="corpsecret" value="{{.config.CorpSecret}}" required>
-            
-            <hr style="border:0; border-top:1px dashed #ccc; margin: 15px 0;">
-            
-            <label>消息标题 (可选)</label>
-            <input type="text" name="title" placeholder="默认：NAS 系统通知" value="{{.config.CustomTitle}}">
-            
-            <label>代理地址 (可选, 解决内网不通)</label>
-            <input type="text" name="proxy_url" placeholder="例如: https://myproxy.com" value="{{.config.ProxyURL}}">
-            <div class="note">留空则使用官方 https://qyapi.weixin.qq.com</div>
-            
-            <label>接收用户 (可选)</label>
-            <input type="text" name="touser" placeholder="默认: @all" value="{{.config.ToUser}}">
-            
-            <button type="submit">保存并生效</button>
+            <div class="group">
+                <label>NAS 跳转地址</label>
+                <input type="text" name="nas_url" placeholder="http://..." value="{{.config.NasURL}}">
+            </div>
+            <div class="group">
+                <label>图片 API</label>
+                <input type="text" name="photo_url" placeholder="可选" value="{{.config.PhotoURL}}">
+            </div>
+            <div class="group">
+                <label>代理地址 (使用代理IP需要配置此项)</label>
+                <input type="text" name="proxy_url" placeholder="例如: http://proxy.com" value="{{.config.ProxyURL}}">
+            </div>
+
+            <button type="submit">保存配置</button>
         </form>
     </div>
 </body>

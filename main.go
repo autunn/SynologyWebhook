@@ -2,12 +2,19 @@ package main
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/sha1"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -15,15 +22,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Config 结构体：增加了代理、标题、接收人
+// Config 增加 Token 和 EncodingAESKey
 type Config struct {
-	CorpID      string `json:"corpid"`
-	AgentID     string `json:"agentid"`
-	CorpSecret  string `json:"corpsecret"`
-	ProxyURL    string `json:"proxy_url"` // 新增：代理地址
-	CustomTitle string `json:"title"`     // 新增：消息标题
-	ToUser      string `json:"touser"`    // 新增：接收用户
-	Configured  bool   `json:"configured"`
+	CorpID         string `json:"corpid"`
+	AgentID        string `json:"agentid"`
+	CorpSecret     string `json:"corpsecret"`
+	Token          string `json:"token"`            // 新增：回调Token
+	EncodingAESKey string `json:"encoding_aes_key"` // 新增：回调解密Key
+	ProxyURL       string `json:"proxy_url"`
+	NasURL         string `json:"nas_url"`
+	PhotoURL       string `json:"photo_url"`
+	Configured     bool   `json:"configured"`
 }
 
 var configPath = "data/config.json"
@@ -45,30 +54,66 @@ func main() {
 		})
 	})
 
-	// 2. 保存配置（增加了新字段的处理）
+	// 2. 保存配置
 	r.POST("/save", func(c *gin.Context) {
 		newConfig := Config{
-			CorpID:      c.PostForm("corpid"),
-			AgentID:     c.PostForm("agentid"),
-			CorpSecret:  c.PostForm("corpsecret"),
-			ProxyURL:    strings.TrimRight(c.PostForm("proxy_url"), "/"), // 去掉末尾斜杠
-			CustomTitle: c.PostForm("title"),
-			ToUser:      c.PostForm("touser"),
-			Configured:  true,
+			CorpID:         c.PostForm("corpid"),
+			AgentID:        c.PostForm("agentid"),
+			CorpSecret:     c.PostForm("corpsecret"),
+			Token:          c.PostForm("token"),            // 保存 Token
+			EncodingAESKey: c.PostForm("encoding_aes_key"), // 保存 AES Key
+			ProxyURL:       strings.TrimRight(c.PostForm("proxy_url"), "/"),
+			NasURL:         strings.TrimRight(c.PostForm("nas_url"), "/"),
+			PhotoURL:       c.PostForm("photo_url"),
+			Configured:     true,
 		}
-		// 设置默认值
-		if newConfig.ToUser == "" {
-			newConfig.ToUser = "@all"
+		if newConfig.NasURL == "" {
+			newConfig.NasURL = "http://quickconnect.to/"
 		}
 		saveConfig(newConfig)
 		c.Redirect(http.StatusSeeOther, "/?success=true")
 	})
 
-	// 3. Webhook 接口
+	// 3. Webhook 回调验证接口 (GET) - 严格遵循企业微信文档
+	r.GET("/webhook", func(c *gin.Context) {
+		conf := loadConfig()
+		
+		// 获取 URL 参数
+		msgSignature := c.Query("msg_signature")
+		timestamp := c.Query("timestamp")
+		nonce := c.Query("nonce")
+		echostr := c.Query("echostr")
+
+		// 如果没有这些参数，说明不是回调验证，忽略
+		if msgSignature == "" || timestamp == "" || nonce == "" || echostr == "" {
+			c.String(http.StatusBadRequest, "Invalid Request")
+			return
+		}
+
+		// 1. 校验签名
+		if !verifySignature(conf.Token, timestamp, nonce, echostr, msgSignature) {
+			log.Println("签名校验失败")
+			c.String(http.StatusForbidden, "Signature verification failed")
+			return
+		}
+
+		// 2. 解密 echostr
+		decryptedMsg, err := decryptEchoStr(conf.EncodingAESKey, echostr)
+		if err != nil {
+			log.Printf("解密失败: %v\n", err)
+			c.String(http.StatusForbidden, "Decryption failed")
+			return
+		}
+
+		// 3. 返回解密后的明文
+		c.String(http.StatusOK, string(decryptedMsg))
+	})
+
+	// 4. Webhook 接收消息接口 (POST)
 	r.POST("/webhook", func(c *gin.Context) {
 		var synologyData map[string]interface{}
 		if err := c.ShouldBindJSON(&synologyData); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "JSON error"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "JSON invalid"})
 			return
 		}
 
@@ -79,12 +124,83 @@ func main() {
 		}
 
 		go sendToWeChat(conf, synologyData)
-		c.JSON(http.StatusOK, gin.H{"status": "processing"})
+		c.JSON(http.StatusOK, gin.H{"status": "success"})
 	})
 
-	log.Println("Full-Feature Go Server starting on :5080")
+	log.Println("Go Server Started on :5080")
 	r.Run(":5080")
 }
+
+// --- 以下是企业微信加解密核心逻辑 ---
+
+// 校验签名
+func verifySignature(token, timestamp, nonce, echostr, msgSignature string) bool {
+	// 排序
+	params := []string{token, timestamp, nonce, echostr}
+	sort.Strings(params)
+	
+	// 拼接
+	str := strings.Join(params, "")
+	
+	// SHA1 哈希
+	h := sha1.New()
+	h.Write([]byte(str))
+	calculatedSignature := fmt.Sprintf("%x", h.Sum(nil))
+	
+	return calculatedSignature == msgSignature
+}
+
+// 解密 echostr
+func decryptEchoStr(encodingAESKey, echostr string) ([]byte, error) {
+	// 1. Base64 解码 AESKey
+	aesKey, err := base64.StdEncoding.DecodeString(encodingAESKey + "=")
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. Base64 解码密文
+	cipherText, err := base64.StdEncoding.DecodeString(echostr)
+	if err != nil {
+		return nil, err
+	}
+
+	// 3. AES 解密
+	block, err := aes.NewCipher(aesKey)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(cipherText) < aes.BlockSize {
+		return nil, errors.New("cipher text too short")
+	}
+
+	// IV 是 Key 的前 16 位
+	iv := aesKey[:16]
+	if len(cipherText)%aes.BlockSize != 0 {
+		return nil, errors.New("cipher text is not a multiple of the block size")
+	}
+
+	mode := cipher.NewCBCDecrypter(block, iv)
+	mode.CryptBlocks(cipherText, cipherText)
+
+	// 4. 去除填充 (PKCS7)
+	pad := int(cipherText[len(cipherText)-1])
+	if pad < 1 || pad > 32 {
+		pad = 0
+	}
+	cipherText = cipherText[:len(cipherText)-pad]
+
+	// 5. 去除 16 位随机字符串
+	content := cipherText[16:]
+
+	// 6. 读取 4 位长度
+	msgLen := binary.BigEndian.Uint32(content[:4])
+	
+	// 7. 截取真正的明文
+	return content[4 : 4+msgLen], nil
+}
+
+// --- 基础逻辑维持不变 ---
 
 func loadConfig() Config {
 	var conf Config
@@ -101,7 +217,6 @@ func saveConfig(conf Config) {
 	os.WriteFile(configPath, data, 0644)
 }
 
-// 辅助函数：获取基础 URL（支持代理）
 func getBaseURL(conf Config) string {
 	if conf.ProxyURL != "" {
 		return conf.ProxyURL
@@ -113,11 +228,8 @@ func getAccessToken(conf Config) (string, error) {
 	if accessToken != "" && accessTokenExpiresAt > time.Now().Unix()+60 {
 		return accessToken, nil
 	}
-
-	// 动态拼接 URL
 	baseURL := getBaseURL(conf)
 	url := fmt.Sprintf("%s/cgi-bin/gettoken?corpid=%s&corpsecret=%s", baseURL, conf.CorpID, conf.CorpSecret)
-	
 	resp, err := http.Get(url)
 	if err != nil {
 		return "", err
@@ -132,26 +244,21 @@ func getAccessToken(conf Config) (string, error) {
 	}
 
 	if token, ok := result["access_token"].(string); ok {
-		var expiresIn int64 = 7200
-		if exp, ok := result["expires_in"].(float64); ok {
-			expiresIn = int64(exp)
-		}
 		accessToken = token
-		accessTokenExpiresAt = time.Now().Unix() + expiresIn
+		accessTokenExpiresAt = time.Now().Unix() + 7000
 		return accessToken, nil
 	}
-	return "", fmt.Errorf("Token not found")
+	return "", fmt.Errorf("Token Error")
 }
 
 func sendToWeChat(conf Config, data map[string]interface{}) {
 	token, err := getAccessToken(conf)
 	if err != nil {
-		log.Println("Token Error:", err)
+		log.Println("Token Fail:", err)
 		return
 	}
 
-	// 智能解析内容
-	content := "收到新通知"
+	content := "系统事件"
 	if msg, ok := data["message"].(string); ok {
 		content = msg
 	} else if val, ok := data["data"].(map[string]interface{}); ok {
@@ -162,25 +269,32 @@ func sendToWeChat(conf Config, data map[string]interface{}) {
 		content = text
 	}
 
-	// 标题处理
-	title := "NAS 系统通知"
-	if conf.CustomTitle != "" {
-		title = conf.CustomTitle
-	}
-
 	agentID, _ := strconv.Atoi(conf.AgentID)
 	baseURL := getBaseURL(conf)
 
-	// 构造消息
+	picURL := conf.PhotoURL
+	if picURL == "" {
+		picURL = fmt.Sprintf("https://picsum.photos/600/300?random=%d", time.Now().UnixNano())
+	}
+
+	jumpURL := conf.NasURL
+	if jumpURL == "" {
+		jumpURL = "https://www.synology.com"
+	}
+
 	payload := map[string]interface{}{
-		"touser":  conf.ToUser,
-		"msgtype": "textcard",
+		"touser":  "@all",
+		"msgtype": "news",
 		"agentid": agentID,
-		"textcard": map[string]interface{}{
-			"title":       title,
-			"description": fmt.Sprintf("<div class=\"gray\">%s</div> <div class=\"normal\">%s</div>", time.Now().Format("15:04:05"), content),
-			"url":         "https://www.synology.com",
-			"btntxt":      "详情",
+		"news": map[string]interface{}{
+			"articles": []map[string]interface{}{
+				{
+					"title":       "NAS 通知中心",
+					"description": fmt.Sprintf("[%s]\n%s", time.Now().Format("15:04"), content),
+					"url":         jumpURL,
+					"picurl":      picURL,
+				},
+			},
 		},
 	}
 
@@ -189,11 +303,11 @@ func sendToWeChat(conf Config, data map[string]interface{}) {
 	
 	resp, err := http.Post(postURL, "application/json", bytes.NewBuffer(body))
 	if err != nil {
-		log.Println("Push Error:", err)
+		log.Println("Push Fail:", err)
 		return
 	}
 	defer resp.Body.Close()
 	
 	respBody, _ := io.ReadAll(resp.Body)
-	log.Println("WeChat Response:", string(respBody))
+	log.Println("WeChat Resp:", string(respBody))
 }

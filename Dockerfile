@@ -1,23 +1,25 @@
-# 阶段一：编译
+# 阶段一：编译环境
 FROM golang:1.21-alpine AS builder
 
 WORKDIR /app
 
-# 1. 设置代理，保证下载速度和稳定性
+# 1. 拷贝 go.mod (如果有的话)
+COPY go.mod ./
+
+# 2. 下载依赖
 ENV GOPROXY=https://proxy.golang.org,direct
-
-# 2. 【关键修改】先拷贝所有文件进去
-# 之前是先 copy go.mod 再 copy main.go，导致 tidy 找不到代码引用
-COPY . .
-
-# 3. 下载依赖
-# 现在 main.go 已经在里面了，tidy 就能看到你需要 gin 框架，并自动下载
 RUN go mod tidy
 
-# 4. 编译
-RUN CGO_ENABLED=0 GOOS=linux go build -o webhook-app .
+# 3. 拷贝源代码
+COPY main.go ./
 
-# 阶段二：运行
+# 4. 拷贝模板
+COPY templates ./templates
+
+# 5. 编译
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o webhook-app .
+
+# 阶段二：运行环境
 FROM alpine:latest
 
 WORKDIR /app
