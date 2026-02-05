@@ -9,17 +9,21 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
-// Config 结构体用于保存配置
+// Config 结构体：增加了代理、标题、接收人
 type Config struct {
-	CorpID     string `json:"corpid"`
-	AgentID    string `json:"agentid"`
-	CorpSecret string `json:"corpsecret"`
-	Configured bool   `json:"configured"`
+	CorpID      string `json:"corpid"`
+	AgentID     string `json:"agentid"`
+	CorpSecret  string `json:"corpsecret"`
+	ProxyURL    string `json:"proxy_url"` // 新增：代理地址
+	CustomTitle string `json:"title"`     // 新增：消息标题
+	ToUser      string `json:"touser"`    // 新增：接收用户
+	Configured  bool   `json:"configured"`
 }
 
 var configPath = "data/config.json"
@@ -27,17 +31,12 @@ var accessToken string
 var accessTokenExpiresAt int64
 
 func main() {
-	// 确保数据目录存在
 	os.MkdirAll("data", 0755)
-
-	// 设置为发布模式
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
-
-	// 加载 HTML 模板
 	r.LoadHTMLGlob("templates/*")
 
-	// 1. 首页配置界面
+	// 1. 首页
 	r.GET("/", func(c *gin.Context) {
 		conf := loadConfig()
 		c.HTML(http.StatusOK, "index.html", gin.H{
@@ -46,19 +45,26 @@ func main() {
 		})
 	})
 
-	// 2. 保存配置接口
+	// 2. 保存配置（增加了新字段的处理）
 	r.POST("/save", func(c *gin.Context) {
 		newConfig := Config{
-			CorpID:     c.PostForm("corpid"),
-			AgentID:    c.PostForm("agentid"),
-			CorpSecret: c.PostForm("corpsecret"),
-			Configured: true,
+			CorpID:      c.PostForm("corpid"),
+			AgentID:     c.PostForm("agentid"),
+			CorpSecret:  c.PostForm("corpsecret"),
+			ProxyURL:    strings.TrimRight(c.PostForm("proxy_url"), "/"), // 去掉末尾斜杠
+			CustomTitle: c.PostForm("title"),
+			ToUser:      c.PostForm("touser"),
+			Configured:  true,
+		}
+		// 设置默认值
+		if newConfig.ToUser == "" {
+			newConfig.ToUser = "@all"
 		}
 		saveConfig(newConfig)
 		c.Redirect(http.StatusSeeOther, "/?success=true")
 	})
 
-	// 3. Webhook 接收接口
+	// 3. Webhook 接口
 	r.POST("/webhook", func(c *gin.Context) {
 		var synologyData map[string]interface{}
 		if err := c.ShouldBindJSON(&synologyData); err != nil {
@@ -76,7 +82,7 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"status": "processing"})
 	})
 
-	log.Println("Server starting on :5080")
+	log.Println("Full-Feature Go Server starting on :5080")
 	r.Run(":5080")
 }
 
@@ -95,12 +101,23 @@ func saveConfig(conf Config) {
 	os.WriteFile(configPath, data, 0644)
 }
 
-func getAccessToken(corpID, corpSecret string) (string, error) {
+// 辅助函数：获取基础 URL（支持代理）
+func getBaseURL(conf Config) string {
+	if conf.ProxyURL != "" {
+		return conf.ProxyURL
+	}
+	return "https://qyapi.weixin.qq.com"
+}
+
+func getAccessToken(conf Config) (string, error) {
 	if accessToken != "" && accessTokenExpiresAt > time.Now().Unix()+60 {
 		return accessToken, nil
 	}
 
-	url := fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=%s&corpsecret=%s", corpID, corpSecret)
+	// 动态拼接 URL
+	baseURL := getBaseURL(conf)
+	url := fmt.Sprintf("%s/cgi-bin/gettoken?corpid=%s&corpsecret=%s", baseURL, conf.CorpID, conf.CorpSecret)
+	
 	resp, err := http.Get(url)
 	if err != nil {
 		return "", err
@@ -115,7 +132,6 @@ func getAccessToken(corpID, corpSecret string) (string, error) {
 	}
 
 	if token, ok := result["access_token"].(string); ok {
-		// 安全获取 expires_in
 		var expiresIn int64 = 7200
 		if exp, ok := result["expires_in"].(float64); ok {
 			expiresIn = int64(exp)
@@ -128,12 +144,13 @@ func getAccessToken(corpID, corpSecret string) (string, error) {
 }
 
 func sendToWeChat(conf Config, data map[string]interface{}) {
-	token, err := getAccessToken(conf.CorpID, conf.CorpSecret)
+	token, err := getAccessToken(conf)
 	if err != nil {
 		log.Println("Token Error:", err)
 		return
 	}
 
+	// 智能解析内容
 	content := "收到新通知"
 	if msg, ok := data["message"].(string); ok {
 		content = msg
@@ -145,14 +162,22 @@ func sendToWeChat(conf Config, data map[string]interface{}) {
 		content = text
 	}
 
-	agentID, _ := strconv.Atoi(conf.AgentID)
+	// 标题处理
+	title := "NAS 系统通知"
+	if conf.CustomTitle != "" {
+		title = conf.CustomTitle
+	}
 
+	agentID, _ := strconv.Atoi(conf.AgentID)
+	baseURL := getBaseURL(conf)
+
+	// 构造消息
 	payload := map[string]interface{}{
-		"touser":  "@all",
+		"touser":  conf.ToUser,
 		"msgtype": "textcard",
 		"agentid": agentID,
 		"textcard": map[string]interface{}{
-			"title":       "NAS 通知",
+			"title":       title,
 			"description": fmt.Sprintf("<div class=\"gray\">%s</div> <div class=\"normal\">%s</div>", time.Now().Format("15:04:05"), content),
 			"url":         "https://www.synology.com",
 			"btntxt":      "详情",
@@ -160,7 +185,7 @@ func sendToWeChat(conf Config, data map[string]interface{}) {
 	}
 
 	body, _ := json.Marshal(payload)
-	postURL := fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=%s", token)
+	postURL := fmt.Sprintf("%s/cgi-bin/message/send?access_token=%s", baseURL, token)
 	
 	resp, err := http.Post(postURL, "application/json", bytes.NewBuffer(body))
 	if err != nil {
