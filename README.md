@@ -1,7 +1,9 @@
-
-![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/autunn/SynologyWebhook/main.yml?branch=main&label=Build%20Status&logo=github)
-![Docker Pulls](https://img.shields.io/docker/pulls/autunn/synologywebhook?logo=docker)
-![Docker Image Size](https://img.shields.io/docker/image-size/autunn/synologywebhook/latest?logo=docker)
+<p align="center">
+  <a href="https://github.com/autunn/SynologyWebhook"><img src="https://img.shields.io/github/stars/autunn/SynologyWebhook.svg?color=94398d&labelColor=555555&logoColor=ffffff&style=for-the-badge&logo=github" alt="GitHub Stars"></a>
+  <a href="https://github.com/autunn/SynologyWebhook/releases"><img src="https://img.shields.io/github/release/autunn/SynologyWebhook.svg?color=94398d&labelColor=555555&logoColor=ffffff&style=for-the-badge&logo=github" alt="GitHub Release"></a>
+  <a href="https://hub.docker.com/r/autunn/synologywebhook"><img src="https://img.shields.io/docker/pulls/autunn/synologywebhook.svg?color=94398d&labelColor=555555&logoColor=ffffff&style=for-the-badge&label=pulls&logo=docker" alt="Docker Pulls"></a>
+  <a href="https://github.com/autunn/SynologyWebhook/actions/workflows/main.yml"><img src="https://img.shields.io/github/actions/workflow/status/autunn/SynologyWebhook/main.yml?branch=main&color=94398d&labelColor=555555&logoColor=ffffff&style=for-the-badge&label=Build&logo=github" alt="GitHub Workflow Status"></a>
+</p>
 
 ### ✨ 项目特点
 
