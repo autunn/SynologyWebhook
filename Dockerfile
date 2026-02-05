@@ -6,23 +6,17 @@ WORKDIR /app
 # 1. 安装 Git (下载依赖必备)
 RUN apk add --no-cache git
 
-# 2. 拷贝源代码
+# 2.【关键】先拷贝所有文件
+# 我们直接使用你仓库里的 go.mod 和 main.go，不再自己在容器里瞎折腾
 COPY . .
 
-# 3. 设置 Go 代理 (关键修复：使用 goproxy.cn 解决网络超时问题)
-ENV GOPROXY=https://goproxy.cn,direct
-
-# 4. 暴力重置依赖 (拆分成多步，更稳健)
-# 先删旧文件
-RUN rm -f go.mod go.sum
-# 初始化新模块
-RUN go mod init SynologyWebhook
-# 显式下载 gin 框架 (比 tidy 更强力)
-RUN go get github.com/gin-gonic/gin
-# 最后整理依赖
+# 3. 下载依赖
+# 使用 Go 官方全球代理 (GitHub Actions 服务器在美国，连这个最快最稳)
+ENV GOPROXY=https://proxy.golang.org,direct
+# 这一步会根据你的 main.go 和 go.mod 自动下载 gin，绝对不会错
 RUN go mod tidy
 
-# 5. 编译
+# 4. 编译
 RUN CGO_ENABLED=0 GOOS=linux go build -o webhook-app .
 
 # 阶段二：运行环境
