@@ -1,8 +1,18 @@
-FROM python:3.9-slim
-ENV TZ=Asia/Shanghai PYTHONUNBUFFERED=1 LANG=C.UTF-8
+# 编译阶段
+FROM golang:1.21-alpine AS builder
 WORKDIR /app
-RUN pip install --no-cache-dir flask requests pycryptodome -i https://pypi.tuna.tsinghua.edu.cn/simple
-RUN mkdir -p /app/data
-COPY app.py .
+# 使用代理加速
+ENV GOPROXY=https://goproxy.cn,direct
+COPY . .
+RUN go mod init SynologyWebhook && go mod tidy
+RUN CGO_ENABLED=0 GOOS=linux go build -o webhook-app .
+
+# 运行阶段
+FROM alpine:latest
+WORKDIR /app
+RUN apk add --no-cache ca-certificates tzdata
+COPY --from=builder /app/webhook-app .
+COPY --from=builder /app/templates ./templates
 EXPOSE 5080
-CMD ["python", "app.py"]
+VOLUME ["/app/data"]
+CMD ["./webhook-app"]
