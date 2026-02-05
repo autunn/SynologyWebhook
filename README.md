@@ -2,6 +2,12 @@
 
 这是一个为群晖 NAS 用户量身定制的 Webhook 转发工具。它可以接收群晖系统通知，并将其精美地转发到您的**企业微信**中。
 
+# SynologyWebhook
+
+![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/autunn/SynologyWebhook/build.yml?branch=main&label=Build%20Status&logo=github)
+![Docker Pulls](https://img.shields.io/docker/pulls/autunn/synologywebhook?logo=docker)
+![Docker Image Size](https://img.shields.io/docker/image-size/autunn/synologywebhook/latest?logo=docker)
+
 ### ✨ 项目特点
 
 * **多架构支持**：原生支持 `x86_64` (amd64) 和 `arm64` 架构，群晖全机型通用。
