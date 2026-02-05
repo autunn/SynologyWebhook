@@ -3,21 +3,26 @@ FROM golang:1.21-alpine AS builder
 
 WORKDIR /app
 
-# 1.【关键修复】安装 git
-# Alpine 镜像默认没有 git，go mod tidy 下载依赖时经常需要它，否则会报错 exit code 1
+# 1. 安装 Git (下载依赖必备)
 RUN apk add --no-cache git
 
-# 2. 拷贝所有文件
+# 2. 拷贝源代码
 COPY . .
 
-# 3.【核心大招】自修复依赖环境
-# 强制删除可能存在的旧配置，现场重新生成，确保 100% 匹配当前代码
-# 这样就彻底排除了 "go.mod 文件冲突" 或 "go.mod 缺失" 的问题
-RUN rm -f go.mod go.sum && \
-    go mod init SynologyWebhook && \
-    go mod tidy
+# 3. 设置 Go 代理 (关键修复：使用 goproxy.cn 解决网络超时问题)
+ENV GOPROXY=https://goproxy.cn,direct
 
-# 4. 编译
+# 4. 暴力重置依赖 (拆分成多步，更稳健)
+# 先删旧文件
+RUN rm -f go.mod go.sum
+# 初始化新模块
+RUN go mod init SynologyWebhook
+# 显式下载 gin 框架 (比 tidy 更强力)
+RUN go get github.com/gin-gonic/gin
+# 最后整理依赖
+RUN go mod tidy
+
+# 5. 编译
 RUN CGO_ENABLED=0 GOOS=linux go build -o webhook-app .
 
 # 阶段二：运行环境
@@ -30,7 +35,7 @@ RUN apk add --no-cache ca-certificates tzdata
 
 # 拷贝编译结果
 COPY --from=builder /app/webhook-app .
-# 拷贝模板文件夹
+# 拷贝模板
 COPY templates ./templates
 
 EXPOSE 5080
