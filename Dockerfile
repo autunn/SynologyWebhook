@@ -2,19 +2,24 @@
 FROM golang:1.21-alpine AS builder
 
 WORKDIR /app
-# 移除国内代理，使用官方源更适合 GitHub Actions 环境
-# ENV GOPROXY=https://goproxy.cn,direct 
 
-# 1. 这里只拷贝 main.go，千万不要写 COPY . . 或者 COPY go.mod ...
-COPY main.go ./
+# 1. 安装 git (关键修复：解决 go get 失败的问题)
+RUN apk add --no-cache git
 
-# 2. 关键步骤：在容器内部自动生成依赖文件
-# 这样就不需要你在 GitHub 上维护 go.mod/go.sum 了，彻底解决“找不到文件”的问题
+# 2. 拷贝所有文件 (简单粗暴，防止漏文件)
+COPY . .
+
+# 3. 强力修复：无论你仓库里有没有传 go.mod，先删一遍，确保环境纯净
+# 这样就彻底解决了 "go.mod already exists" 的报错
+RUN rm -f go.mod go.sum
+
+# 4. 重新初始化并下载依赖 (使用默认官方源，GitHub Actions 连接最快)
+ENV GOPROXY=https://proxy.golang.org,direct
 RUN go mod init SynologyWebhook && \
     go get github.com/gin-gonic/gin && \
     go mod tidy
 
-# 3. 编译
+# 5. 编译
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o webhook-app .
 
 # 阶段二：运行环境
