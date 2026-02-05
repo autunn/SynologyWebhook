@@ -67,6 +67,7 @@ func main() {
 			PhotoURL:       c.PostForm("photo_url"),
 			Configured:     true,
 		}
+		// 默认 NAS 地址
 		if newConfig.NasURL == "" {
 			newConfig.NasURL = "http://quickconnect.to/"
 		}
@@ -133,7 +134,7 @@ func verifySignature(token, timestamp, nonce, echostr, msgSignature string) bool
 	return fmt.Sprintf("%x", h.Sum(nil)) == msgSignature
 }
 
-// 解密
+// 解密函数 (已修复类型错误和逻辑错误)
 func decryptEchoStr(encodingAESKey, echostr string) ([]byte, error) {
 	aesKey, err := base64.StdEncoding.DecodeString(encodingAESKey + "=")
 	if err != nil {
@@ -161,13 +162,12 @@ func decryptEchoStr(encodingAESKey, echostr string) ([]byte, error) {
 		pad = 0
 	}
 	cipherText = cipherText[:len(cipherText)-pad]
-	
-	// 【关键修复点】
-	// 1. 获取内容长度 (位于 16-20 字节)
+
+	// 修复点：
+	// 1. 从 16-20 字节读取长度
+	// 2. 从 20 字节开始读取内容
+	// 3. 必须使用 int() 将 uint32 转为 int，否则编译失败
 	msgLen := binary.BigEndian.Uint32(cipherText[16:20])
-	
-	// 2. 截取真正的内容 (从第 20 字节开始)
-	// 必须强制转换 int(msgLen)，否则编译报错
 	return cipherText[20 : 20+int(msgLen)], nil
 }
 
