@@ -67,7 +67,6 @@ func main() {
 			PhotoURL:       c.PostForm("photo_url"),
 			Configured:     true,
 		}
-		// 默认 NAS 地址
 		if newConfig.NasURL == "" {
 			newConfig.NasURL = "http://quickconnect.to/"
 		}
@@ -134,7 +133,7 @@ func verifySignature(token, timestamp, nonce, echostr, msgSignature string) bool
 	return fmt.Sprintf("%x", h.Sum(nil)) == msgSignature
 }
 
-// 解密函数 (已修复类型错误和逻辑错误)
+// 解密函数
 func decryptEchoStr(encodingAESKey, echostr string) ([]byte, error) {
 	aesKey, err := base64.StdEncoding.DecodeString(encodingAESKey + "=")
 	if err != nil {
@@ -163,10 +162,8 @@ func decryptEchoStr(encodingAESKey, echostr string) ([]byte, error) {
 	}
 	cipherText = cipherText[:len(cipherText)-pad]
 
-	// 修复点：
-	// 1. 从 16-20 字节读取长度
-	// 2. 从 20 字节开始读取内容
-	// 3. 必须使用 int() 将 uint32 转为 int，否则编译失败
+	// 【修复点 1】类型强制转换
+	// 必须把 uint32 转为 int，否则编译报错 "mismatched types int and uint32"
 	msgLen := binary.BigEndian.Uint32(cipherText[16:20])
 	return cipherText[20 : 20+int(msgLen)], nil
 }
@@ -265,5 +262,18 @@ func sendToWeChat(conf Config, data map[string]interface{}) {
 		},
 	}
 	body, _ := json.Marshal(payload)
-	http.Post(fmt.Sprintf("%s/cgi-bin/message/send?access_token=%s", baseURL, token), "application/json", bytes.NewBuffer(body))
+	postURL := fmt.Sprintf("%s/cgi-bin/message/send?access_token=%s", baseURL, token)
+
+	// 【修复点 2】恢复 io 读取
+	// 之前直接调用 http.Post 忽略了返回值，导致 import "io" 报错 "unused import"
+	resp, err := http.Post(postURL, "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		log.Println("Push Error:", err)
+		return
+	}
+	defer resp.Body.Close()
+	
+	// 这里使用了 io 包，解决了 "imported and not used: io" 的编译错误
+	respBody, _ := io.ReadAll(resp.Body)
+	log.Println("WeChat Response:", string(respBody))
 }
