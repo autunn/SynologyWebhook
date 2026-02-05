@@ -161,7 +161,14 @@ func decryptEchoStr(encodingAESKey, echostr string) ([]byte, error) {
 		pad = 0
 	}
 	cipherText = cipherText[:len(cipherText)-pad]
-	return cipherText[16 : 16+binary.BigEndian.Uint32(cipherText[16:20])], nil
+	
+	// 【关键修复点】
+	// 1. 获取内容长度 (位于 16-20 字节)
+	msgLen := binary.BigEndian.Uint32(cipherText[16:20])
+	
+	// 2. 截取真正的内容 (从第 20 字节开始)
+	// 必须强制转换 int(msgLen)，否则编译报错
+	return cipherText[20 : 20+int(msgLen)], nil
 }
 
 func loadConfig() Config {

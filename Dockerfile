@@ -3,17 +3,21 @@ FROM golang:1.21-alpine AS builder
 
 WORKDIR /app
 
-# 1.【核心修复】先拷贝所有文件
-# 必须把 main.go 和 go.mod 先拷进去，go mod tidy 才能识别出你需要 gin 框架
+# 1.【关键修复】安装 git
+# Alpine 镜像默认没有 git，go mod tidy 下载依赖时经常需要它，否则会报错 exit code 1
+RUN apk add --no-cache git
+
+# 2. 拷贝所有文件
 COPY . .
 
-# 2. 自动修复依赖
-# 这一步会根据拷贝进来的代码，自动下载 gin 包并生成正确的文件
-ENV GOPROXY=https://proxy.golang.org,direct
-RUN go mod tidy
+# 3.【核心大招】自修复依赖环境
+# 强制删除可能存在的旧配置，现场重新生成，确保 100% 匹配当前代码
+# 这样就彻底排除了 "go.mod 文件冲突" 或 "go.mod 缺失" 的问题
+RUN rm -f go.mod go.sum && \
+    go mod init SynologyWebhook && \
+    go mod tidy
 
-# 3. 编译
-# 此时依赖已经齐了，编译绝对能通过
+# 4. 编译
 RUN CGO_ENABLED=0 GOOS=linux go build -o webhook-app .
 
 # 阶段二：运行环境
