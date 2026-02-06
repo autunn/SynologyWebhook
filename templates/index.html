@@ -6,28 +6,48 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         body {
-            background: #f4f6f9; /* 更柔和的高级灰背景 */
+            background: #f4f6f9; /* 高级灰背景 */
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             height: 100vh; margin: 0; display: flex; align-items: center; justify-content: center;
         }
         .container {
             background: white; 
-            padding: 40px 30px; /* 增加内边距，呼吸感更强 */
-            border-radius: 16px; /* 更大的圆角 */
+            padding: 40px 30px; 
+            border-radius: 16px; 
             width: 420px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.05); /* 更高级的虚化阴影 */
+            box-shadow: 0 10px 25px rgba(0,0,0,0.05); 
             overflow-y: auto; max-height: 90vh;
+            position: relative; /* 关键：设置为相对定位，作为内部绝对定位元素的基准 */
         }
         
+        /* 退出按钮样式 - 悬浮在卡片右上角 */
+        .logout-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            text-decoration: none;
+            color: #ef4444; /* 警示红 */
+            font-size: 13px;
+            font-weight: 600;
+            padding: 6px 12px;
+            border-radius: 20px;
+            background-color: #fef2f2; /* 极淡的红色背景 */
+            transition: all 0.2s;
+        }
+        .logout-btn:hover {
+            background-color: #fee2e2;
+            color: #dc2626;
+        }
+
         /* Logo 样式 */
         .logo {
             display: block;
-            width: 80px;  /* 黄金尺寸 */
+            width: 80px;
             height: 80px;
-            margin: 0 auto 20px auto; /* 居中并与标题保持距离 */
-            border-radius: 18px; /* 与容器圆角呼应 */
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08); /* Logo 的悬浮质感 */
-            object-fit: cover; /* 防止图片变形 */
+            margin: 0 auto 20px auto;
+            border-radius: 18px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            object-fit: cover;
         }
 
         h2 { 
@@ -42,7 +62,7 @@
             display: block; 
             font-size: 13px; 
             font-weight: 600; 
-            color: #5c6b7f; /* 更高级的灰蓝色 */
+            color: #5c6b7f; 
             margin-bottom: 6px; 
         }
         input {
@@ -83,6 +103,8 @@
 </head>
 <body>
     <div class="container">
+        <a href="/logout" class="logout-btn">退出 ⏻</a>
+
         <img src="https://raw.githubusercontent.com/autunn/SynologyWebhook/main/logo.png" alt="Logo" class="logo">
         
         <h2>微信推送配置</h2>
