@@ -41,14 +41,18 @@ var configPath = "data/config.json"
 var accessToken string
 var accessTokenExpiresAt int64
 
-// sessionToken 用于验证 Cookie 的有效性
-// 每次重启都会随机生成，意味着重启后所有登录都会失效（更安全）
+// Security Globals
 var sessionToken string
 
+// Version 版本号 (修改此处升级版本)
+var Version = "v3.3.0"
+
 func init() {
-	// 生成随机 Session Token
+	// 每次启动生成随机 Session Token，确保旧 Cookie 失效
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		log.Fatal("Failed to generate session token")
+	}
 	sessionToken = hex.EncodeToString(b)
 }
 
@@ -56,40 +60,45 @@ func main() {
 	os.MkdirAll("data", 0755)
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
+	
+	// 加载模板
 	r.LoadHTMLGlob("templates/*")
 
-	// 获取密码 (默认为 synology)
+	// 获取管理员密码 (默认为 synology)
 	adminPass := os.Getenv("ADMIN_PASSWORD")
 	if adminPass == "" {
 		adminPass = "synology"
 	}
-
+	log.Printf("Server Version: %s", Version)
 	log.Println("Security: Session-based Auth enabled.")
 
 	// ===========================
-	// 1. 公开路由 (登录 & Webhook)
+	// 1. 公开路由 (无需登录)
 	// ===========================
 
 	// 登录页面
 	r.GET("/login", func(c *gin.Context) {
-		// 如果已经登录，直接跳到首页
 		if checkCookie(c) {
 			c.Redirect(http.StatusFound, "/")
 			return
 		}
-		c.HTML(http.StatusOK, "login.html", nil)
+		c.HTML(http.StatusOK, "login.html", gin.H{
+			"version": Version,
+		})
 	})
 
-	// 登录动作
+	// 提交登录
 	r.POST("/login", func(c *gin.Context) {
 		password := c.PostForm("password")
 		if password == adminPass {
-			// 密码正确，设置 Cookie
-			// MaxAge: 3600秒 (1小时过期), Path: "/", HttpOnly: true (防止JS窃取)
+			// 设置 Cookie: 24小时过期, HttpOnly 防止 XSS
 			c.SetCookie("auth_session", sessionToken, 3600*24, "/", "", false, true)
 			c.Redirect(http.StatusFound, "/")
 		} else {
-			c.HTML(http.StatusUnauthorized, "login.html", gin.H{"error": "密码错误，请重试"})
+			c.HTML(http.StatusUnauthorized, "login.html", gin.H{
+				"error":   "密码错误，请重试",
+				"version": Version,
+			})
 		}
 	})
 
@@ -99,18 +108,18 @@ func main() {
 		c.Redirect(http.StatusFound, "/login")
 	})
 
-	// Webhook 回调验证 (GET) - 必须公开
+	// Webhook 验证 (必须公开给微信)
 	r.GET("/webhook", func(c *gin.Context) {
 		handleWebhookVerify(c)
 	})
 
-	// Webhook 接收消息 (POST) - 必须公开 (内部校验配置状态)
+	// Webhook 接收 (必须公开给微信)
 	r.POST("/webhook", func(c *gin.Context) {
 		handleWebhookMsg(c)
 	})
 
 	// ===========================
-	// 2. 私密路由组 (需要 Cookie)
+	// 2. 私密路由 (需要登录)
 	// ===========================
 	authorized := r.Group("/")
 	authorized.Use(AuthMiddleware())
@@ -120,6 +129,7 @@ func main() {
 			c.HTML(http.StatusOK, "index.html", gin.H{
 				"config":  conf,
 				"success": c.Query("success"),
+				"version": Version, // 传递版本号
 			})
 		})
 
@@ -133,10 +143,9 @@ func main() {
 }
 
 // ---------------------------------------------------------
-// 中间件与辅助函数
+// 中间件与路由处理
 // ---------------------------------------------------------
 
-// AuthMiddleware 检查 Cookie 是否合法
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !checkCookie(c) {
@@ -156,7 +165,6 @@ func checkCookie(c *gin.Context) bool {
 	return cookie == sessionToken
 }
 
-// 处理配置保存
 func handleSave(c *gin.Context) {
 	newConfig := Config{
 		CorpID:         c.PostForm("corpid"),
@@ -176,7 +184,6 @@ func handleSave(c *gin.Context) {
 	c.Redirect(http.StatusSeeOther, "/?success=true")
 }
 
-// Webhook 验证逻辑
 func handleWebhookVerify(c *gin.Context) {
 	conf := loadConfig()
 	msgSignature := c.Query("msg_signature")
@@ -188,24 +195,20 @@ func handleWebhookVerify(c *gin.Context) {
 		c.String(http.StatusBadRequest, "Invalid Request")
 		return
 	}
-
 	if !verifySignature(conf.Token, timestamp, nonce, echostr, msgSignature) {
 		log.Println("Sign Verify Failed")
 		c.String(http.StatusForbidden, "Sign Error")
 		return
 	}
-
 	decryptedMsg, err := decryptEchoStr(conf.EncodingAESKey, echostr)
 	if err != nil {
 		log.Printf("Decrypt Failed: %v", err)
 		c.String(http.StatusForbidden, "Decrypt Error")
 		return
 	}
-
 	c.String(http.StatusOK, string(decryptedMsg))
 }
 
-// Webhook 消息处理逻辑
 func handleWebhookMsg(c *gin.Context) {
 	var synologyData map[string]interface{}
 	if err := c.ShouldBindJSON(&synologyData); err != nil {
@@ -222,15 +225,8 @@ func handleWebhookMsg(c *gin.Context) {
 }
 
 // ---------------------------------------------------------
-// 剩下的底层函数 (签名、加密、配置加载、发微信) 保持不变
-// 请确保这里包含之前的 verifySignature, decryptEchoStr,
-// loadConfig, saveConfig, getAccessToken, sendToWeChat 函数
-// (为了篇幅，这里假设你已经保留了它们，如果需要我再次完整贴出请告知)
+// 工具函数 (签名、加密、配置、Token)
 // ---------------------------------------------------------
-
-// ... 这里必须保留原来的 verifySignature 等函数 ...
-// 为了代码完整性，请把之前的辅助函数都贴在 main.go 的下方
-// 下面是几个必要的占位符，你的代码里要有这些的具体实现：
 
 func verifySignature(token, timestamp, nonce, echostr, msgSignature string) bool {
 	params := []string{token, timestamp, nonce, echostr}
