@@ -3,7 +3,8 @@ name: Build and Push Docker Image
 on:
   push:
     tags:
-      - 'v*'
+      - 'v*'           # 只有打类似 v1.0 的标签时才触发
+  workflow_dispatch:   # 允许你手动点击按钮触发（方便测试）
 
 jobs:
   docker:
@@ -21,14 +22,16 @@ jobs:
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          # 注意：这里改回了你之前设置的变量名
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: autunn/synologywebhook
+          # 关键修改：把 autunn/synologywebhook 改成你的项目名
+          images: ${{ secrets.DOCKER_USERNAME }}/project-4869
           tags: |
             type=ref,event=tag
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
@@ -38,6 +41,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
+          # 保留了多架构支持，这很棒
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
