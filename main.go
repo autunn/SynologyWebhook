@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,122 +41,197 @@ var configPath = "data/config.json"
 var accessToken string
 var accessTokenExpiresAt int64
 
+// sessionToken 用于验证 Cookie 的有效性
+// 每次重启都会随机生成，意味着重启后所有登录都会失效（更安全）
+var sessionToken string
+
+func init() {
+	// 生成随机 Session Token
+	b := make([]byte, 16)
+	rand.Read(b)
+	sessionToken = hex.EncodeToString(b)
+}
+
 func main() {
 	os.MkdirAll("data", 0755)
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 	r.LoadHTMLGlob("templates/*")
 
-	// ---------------------------------------------------------
-	// 1. 获取环境变量中的账号密码 (默认为 admin / synology)
-	// ---------------------------------------------------------
-	adminUser := os.Getenv("ADMIN_USER")
-	if adminUser == "" {
-		adminUser = "admin"
-	}
+	// 获取密码 (默认为 synology)
 	adminPass := os.Getenv("ADMIN_PASSWORD")
 	if adminPass == "" {
-		adminPass = "synology" // 默认密码，强烈建议修改
+		adminPass = "synology"
 	}
 
-	log.Printf("Security: Web UI protected with user: %s", adminUser)
+	log.Println("Security: Session-based Auth enabled.")
 
-	// ---------------------------------------------------------
-	// 2. 私密路由组 (需要登录)
-	// 用于：访问首页配置、保存配置
-	// ---------------------------------------------------------
-	// 使用 Gin 的 BasicAuth 中间件
-	authorized := r.Group("/", gin.BasicAuth(gin.Accounts{
-		adminUser: adminPass,
-	}))
+	// ===========================
+	// 1. 公开路由 (登录 & Webhook)
+	// ===========================
 
-	authorized.GET("/", func(c *gin.Context) {
-		conf := loadConfig()
-		c.HTML(http.StatusOK, "index.html", gin.H{
-			"config":  conf,
-			"success": c.Query("success"),
-		})
+	// 登录页面
+	r.GET("/login", func(c *gin.Context) {
+		// 如果已经登录，直接跳到首页
+		if checkCookie(c) {
+			c.Redirect(http.StatusFound, "/")
+			return
+		}
+		c.HTML(http.StatusOK, "login.html", nil)
 	})
 
-	authorized.POST("/save", func(c *gin.Context) {
-		newConfig := Config{
-			CorpID:         c.PostForm("corpid"),
-			AgentID:        c.PostForm("agentid"),
-			CorpSecret:     c.PostForm("corpsecret"),
-			Token:          c.PostForm("token"),
-			EncodingAESKey: c.PostForm("encoding_aes_key"),
-			ProxyURL:       strings.TrimRight(c.PostForm("proxy_url"), "/"),
-			NasURL:         strings.TrimRight(c.PostForm("nas_url"), "/"),
-			PhotoURL:       c.PostForm("photo_url"),
-			Configured:     true,
+	// 登录动作
+	r.POST("/login", func(c *gin.Context) {
+		password := c.PostForm("password")
+		if password == adminPass {
+			// 密码正确，设置 Cookie
+			// MaxAge: 3600秒 (1小时过期), Path: "/", HttpOnly: true (防止JS窃取)
+			c.SetCookie("auth_session", sessionToken, 3600*24, "/", "", false, true)
+			c.Redirect(http.StatusFound, "/")
+		} else {
+			c.HTML(http.StatusUnauthorized, "login.html", gin.H{"error": "密码错误，请重试"})
 		}
-		if newConfig.NasURL == "" {
-			newConfig.NasURL = "http://quickconnect.to/"
-		}
-		saveConfig(newConfig)
-		c.Redirect(http.StatusSeeOther, "/?success=true")
 	})
 
-	// ---------------------------------------------------------
-	// 3. 公开路由 (无需登录)
-	// 用于：企业微信回调验证、接收消息
-	// 注意：这里绝对不能加锁，否则企业微信连不上
-	// ---------------------------------------------------------
-	
-	// Webhook 回调验证 (GET)
+	// 退出登录
+	r.GET("/logout", func(c *gin.Context) {
+		c.SetCookie("auth_session", "", -1, "/", "", false, true)
+		c.Redirect(http.StatusFound, "/login")
+	})
+
+	// Webhook 回调验证 (GET) - 必须公开
 	r.GET("/webhook", func(c *gin.Context) {
-		conf := loadConfig()
-		msgSignature := c.Query("msg_signature")
-		timestamp := c.Query("timestamp")
-		nonce := c.Query("nonce")
-		echostr := c.Query("echostr")
-
-		if msgSignature == "" {
-			c.String(http.StatusBadRequest, "Invalid Request")
-			return
-		}
-
-		if !verifySignature(conf.Token, timestamp, nonce, echostr, msgSignature) {
-			log.Println("Sign Verify Failed")
-			c.String(http.StatusForbidden, "Sign Error")
-			return
-		}
-
-		decryptedMsg, err := decryptEchoStr(conf.EncodingAESKey, echostr)
-		if err != nil {
-			log.Printf("Decrypt Failed: %v", err)
-			c.String(http.StatusForbidden, "Decrypt Error")
-			return
-		}
-
-		c.String(http.StatusOK, string(decryptedMsg))
+		handleWebhookVerify(c)
 	})
 
-	// Webhook 接收消息 (POST)
+	// Webhook 接收消息 (POST) - 必须公开 (内部校验配置状态)
 	r.POST("/webhook", func(c *gin.Context) {
-		var synologyData map[string]interface{}
-		if err := c.ShouldBindJSON(&synologyData); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "JSON error"})
-			return
-		}
-		conf := loadConfig()
-		if !conf.Configured {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Not configured"})
-			return
-		}
-		go sendToWeChat(conf, synologyData)
-		c.JSON(http.StatusOK, gin.H{"status": "success"})
+		handleWebhookMsg(c)
 	})
+
+	// ===========================
+	// 2. 私密路由组 (需要 Cookie)
+	// ===========================
+	authorized := r.Group("/")
+	authorized.Use(AuthMiddleware())
+	{
+		authorized.GET("/", func(c *gin.Context) {
+			conf := loadConfig()
+			c.HTML(http.StatusOK, "index.html", gin.H{
+				"config":  conf,
+				"success": c.Query("success"),
+			})
+		})
+
+		authorized.POST("/save", func(c *gin.Context) {
+			handleSave(c)
+		})
+	}
 
 	log.Println("Server :5080 Started")
 	r.Run(":5080")
 }
 
 // ---------------------------------------------------------
-// 下面的辅助函数保持不变
+// 中间件与辅助函数
 // ---------------------------------------------------------
 
-// 签名校验
+// AuthMiddleware 检查 Cookie 是否合法
+func AuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !checkCookie(c) {
+			c.Redirect(http.StatusFound, "/login")
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+func checkCookie(c *gin.Context) bool {
+	cookie, err := c.Cookie("auth_session")
+	if err != nil {
+		return false
+	}
+	return cookie == sessionToken
+}
+
+// 处理配置保存
+func handleSave(c *gin.Context) {
+	newConfig := Config{
+		CorpID:         c.PostForm("corpid"),
+		AgentID:        c.PostForm("agentid"),
+		CorpSecret:     c.PostForm("corpsecret"),
+		Token:          c.PostForm("token"),
+		EncodingAESKey: c.PostForm("encoding_aes_key"),
+		ProxyURL:       strings.TrimRight(c.PostForm("proxy_url"), "/"),
+		NasURL:         strings.TrimRight(c.PostForm("nas_url"), "/"),
+		PhotoURL:       c.PostForm("photo_url"),
+		Configured:     true,
+	}
+	if newConfig.NasURL == "" {
+		newConfig.NasURL = "http://quickconnect.to/"
+	}
+	saveConfig(newConfig)
+	c.Redirect(http.StatusSeeOther, "/?success=true")
+}
+
+// Webhook 验证逻辑
+func handleWebhookVerify(c *gin.Context) {
+	conf := loadConfig()
+	msgSignature := c.Query("msg_signature")
+	timestamp := c.Query("timestamp")
+	nonce := c.Query("nonce")
+	echostr := c.Query("echostr")
+
+	if msgSignature == "" {
+		c.String(http.StatusBadRequest, "Invalid Request")
+		return
+	}
+
+	if !verifySignature(conf.Token, timestamp, nonce, echostr, msgSignature) {
+		log.Println("Sign Verify Failed")
+		c.String(http.StatusForbidden, "Sign Error")
+		return
+	}
+
+	decryptedMsg, err := decryptEchoStr(conf.EncodingAESKey, echostr)
+	if err != nil {
+		log.Printf("Decrypt Failed: %v", err)
+		c.String(http.StatusForbidden, "Decrypt Error")
+		return
+	}
+
+	c.String(http.StatusOK, string(decryptedMsg))
+}
+
+// Webhook 消息处理逻辑
+func handleWebhookMsg(c *gin.Context) {
+	var synologyData map[string]interface{}
+	if err := c.ShouldBindJSON(&synologyData); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "JSON error"})
+		return
+	}
+	conf := loadConfig()
+	if !conf.Configured {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Not configured"})
+		return
+	}
+	go sendToWeChat(conf, synologyData)
+	c.JSON(http.StatusOK, gin.H{"status": "success"})
+}
+
+// ---------------------------------------------------------
+// 剩下的底层函数 (签名、加密、配置加载、发微信) 保持不变
+// 请确保这里包含之前的 verifySignature, decryptEchoStr,
+// loadConfig, saveConfig, getAccessToken, sendToWeChat 函数
+// (为了篇幅，这里假设你已经保留了它们，如果需要我再次完整贴出请告知)
+// ---------------------------------------------------------
+
+// ... 这里必须保留原来的 verifySignature 等函数 ...
+// 为了代码完整性，请把之前的辅助函数都贴在 main.go 的下方
+// 下面是几个必要的占位符，你的代码里要有这些的具体实现：
+
 func verifySignature(token, timestamp, nonce, echostr, msgSignature string) bool {
 	params := []string{token, timestamp, nonce, echostr}
 	sort.Strings(params)
@@ -164,7 +241,6 @@ func verifySignature(token, timestamp, nonce, echostr, msgSignature string) bool
 	return fmt.Sprintf("%x", h.Sum(nil)) == msgSignature
 }
 
-// 解密函数
 func decryptEchoStr(encodingAESKey, echostr string) ([]byte, error) {
 	aesKey, err := base64.StdEncoding.DecodeString(encodingAESKey + "=")
 	if err != nil {
