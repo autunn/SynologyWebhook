@@ -40,8 +40,10 @@ Synology Webhook 是一个用于将群晖 NAS 消息推送到企业微信的 Web
 docker run -d \
   --name synology-webhook \
   -p 5080:5080 \
-  -v /volume1/docker/synology-webhook:/app/data \
-  autunn/synologywebhook
+  -v $(pwd)/data:/app/data \
+  -e ADMIN_PASSWORD=这里填你的强密码 \
+  --restart always \
+  autunn/synologywebhook:latest
 ```
 
 ### Docker Compose
@@ -49,13 +51,15 @@ docker run -d \
 ```yaml
 version: '3'
 services:
-  synology-webhook:
-    image: autunn/synologywebhook
+  webhook:
+    image: autunn/synologywebhook:latest
     container_name: synology-webhook
     ports:
       - "5080:5080"
     volumes:
-      - /volume1/docker/synology-webhook:/app/data
+      - ./data:/app/data
+    environment:
+      - ADMIN_PASSWORD=这里填你的强密码
     restart: always
 ```
 
