@@ -1,45 +1,50 @@
-<p align="center">
-  <a href="https://github.com/autunn/SynologyWebhook"><img src="https://img.shields.io/github/stars/autunn/SynologyWebhook.svg?color=94398d&labelColor=555555&logoColor=ffffff&style=for-the-badge&logo=github" alt="GitHub Stars"></a>
-  <a href="https://github.com/autunn/SynologyWebhook/releases"><img src="https://img.shields.io/github/release/autunn/SynologyWebhook.svg?color=94398d&labelColor=555555&logoColor=ffffff&style=for-the-badge&logo=github" alt="GitHub Release"></a>
-  <a href="https://hub.docker.com/r/autunn/synologywebhook"><img src="https://img.shields.io/docker/pulls/autunn/synologywebhook.svg?color=94398d&labelColor=555555&logoColor=ffffff&style=for-the-badge&label=pulls&logo=docker&cacheSeconds=3600" alt="Docker Pulls"></a>
-  <a href="https://github.com/autunn/SynologyWebhook/actions/workflows/main.yml"><img src="https://img.shields.io/github/actions/workflow/status/autunn/SynologyWebhook/main.yml?branch=main&color=94398d&labelColor=555555&logoColor=ffffff&style=for-the-badge&label=Build&logo=github" alt="GitHub Workflow Status"></a>
-</p>
+<div align="center">
+  <img src="https://raw.githubusercontent.com/autunn/SynologyWebhook/main/logo.png" width="120" alt="Synology Webhook Logo">
+  <h1>Synology Webhook</h1>
+  <p>
+    <b>连接群晖 NAS 与 企业微信的现代化桥梁</b>
+  </p>
+  <p>
+    <a href="https://hub.docker.com/r/autunn/synologywebhook">
+      <img src="https://img.shields.io/docker/pulls/autunn/synologywebhook?style=flat-square&color=007bff" alt="Docker Pulls">
+    </a>
+    <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License">
+    <img src="https://img.shields.io/badge/Go-1.21-00ADD8?style=flat-square&logo=go" alt="Go Version">
+  </p>
+</div>
 
-### ✨ 项目特点
+---
 
-* **多架构支持**：原生支持 `x86_64` (amd64) 和 `arm64` 架构，群晖全机型通用。
-* **可视化配置**：内置高颜值 Web 配置后台，无需手动修改代码。
-* **安全性**：支持企业微信官方加解密验证，确保接口安全。
-* **灵活推送**：支持直接请求微信服务器或通过自定义 API 代理发送。
+## 📖 简介
 
-### 🚀 快速部署 (Docker Compose)
+这是一个轻量级、高性能的 Webhook 转发工具，专为 **Synology NAS** 用户设计。它可以接收群晖的系统通知，并将其精美地推送到 **企业微信 (WeChat Work)**。
 
-```yaml
-version: '3'
-services:
-  synology-webhook:
-    image: autunn/synologywebhook:latest
-    container_name: SynologyWebhook
-    restart: always
-    ports:
-      - "5080:5080"
-    volumes:
-      - ./data:/app/data
-    environment:
-      - TZ=Asia/Shanghai
+## ✨ 特性
 
+- 🎨 **精美 UI**：内置现代化管理界面，所见即所得。
+- 🔒 **安全验证**：完整支持企业微信回调验证，数据加密传输。
+- 🚀 **一键部署**：支持 Docker 多架构（AMD64/ARM64）。
+- 📷 **图文并茂**：支持自定义通知图片和跳转链接。
+
+## 🐳 Docker 快速部署
+
+```bash
+docker run -d \
+  --name synology-webhook \
+  -p 5080:5080 \
+  -v $(pwd)/data:/app/data \
+  --restart always \
+  autunn/synologywebhook:latest
 ```
 
-### 📖 使用流程
+## ⚙️ 配置方法
 
-1. **部署容器**：使用上述 Compose 文件启动。
-2. **初始化配置**：浏览器访问 `http://NAS_IP:5080`，填写企业微信相关参数。
-3. **设置群晖 Webhook**：
-* 进入群晖 **控制面板** > **通知设置** > **Webhook**。
-* 新增 Webhook，选择“自定义”。
-* URL 填写：`http://NAS_IP:5080/webhook`。
-* HTTP 方法选择 `POST`。
+1. 启动容器后，访问 `http://你的NASIP:5080`。
+2. 填写企业微信的 `CorpID`、`AgentID`、`Secret` 等信息。
+3. 点击保存，配置即时生效。
+4. 在群晖控制面板 -> 通知设置 -> Webhook 中填入回调地址。
 
-
-4. **验证**：在群晖中点击“发送测试消息”，您的企业微信将收到带随机风景封面的精美通知卡片。
-
+---
+<div align="center">
+  <sub>Made with ❤️ by autunn</sub>
+</div>
