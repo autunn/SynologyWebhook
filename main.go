@@ -45,8 +45,30 @@ func main() {
 	r := gin.Default()
 	r.LoadHTMLGlob("templates/*")
 
-	// 1. 首页
-	r.GET("/", func(c *gin.Context) {
+	// ---------------------------------------------------------
+	// 1. 获取环境变量中的账号密码 (默认为 admin / synology)
+	// ---------------------------------------------------------
+	adminUser := os.Getenv("ADMIN_USER")
+	if adminUser == "" {
+		adminUser = "admin"
+	}
+	adminPass := os.Getenv("ADMIN_PASSWORD")
+	if adminPass == "" {
+		adminPass = "synology" // 默认密码，强烈建议修改
+	}
+
+	log.Printf("Security: Web UI protected with user: %s", adminUser)
+
+	// ---------------------------------------------------------
+	// 2. 私密路由组 (需要登录)
+	// 用于：访问首页配置、保存配置
+	// ---------------------------------------------------------
+	// 使用 Gin 的 BasicAuth 中间件
+	authorized := r.Group("/", gin.BasicAuth(gin.Accounts{
+		adminUser: adminPass,
+	}))
+
+	authorized.GET("/", func(c *gin.Context) {
 		conf := loadConfig()
 		c.HTML(http.StatusOK, "index.html", gin.H{
 			"config":  conf,
@@ -54,8 +76,7 @@ func main() {
 		})
 	})
 
-	// 2. 保存配置
-	r.POST("/save", func(c *gin.Context) {
+	authorized.POST("/save", func(c *gin.Context) {
 		newConfig := Config{
 			CorpID:         c.PostForm("corpid"),
 			AgentID:        c.PostForm("agentid"),
@@ -74,7 +95,13 @@ func main() {
 		c.Redirect(http.StatusSeeOther, "/?success=true")
 	})
 
-	// 3. Webhook 回调验证 (GET)
+	// ---------------------------------------------------------
+	// 3. 公开路由 (无需登录)
+	// 用于：企业微信回调验证、接收消息
+	// 注意：这里绝对不能加锁，否则企业微信连不上
+	// ---------------------------------------------------------
+	
+	// Webhook 回调验证 (GET)
 	r.GET("/webhook", func(c *gin.Context) {
 		conf := loadConfig()
 		msgSignature := c.Query("msg_signature")
@@ -103,7 +130,7 @@ func main() {
 		c.String(http.StatusOK, string(decryptedMsg))
 	})
 
-	// 4. Webhook 接收消息 (POST)
+	// Webhook 接收消息 (POST)
 	r.POST("/webhook", func(c *gin.Context) {
 		var synologyData map[string]interface{}
 		if err := c.ShouldBindJSON(&synologyData); err != nil {
@@ -122,6 +149,10 @@ func main() {
 	log.Println("Server :5080 Started")
 	r.Run(":5080")
 }
+
+// ---------------------------------------------------------
+// 下面的辅助函数保持不变
+// ---------------------------------------------------------
 
 // 签名校验
 func verifySignature(token, timestamp, nonce, echostr, msgSignature string) bool {
@@ -162,8 +193,6 @@ func decryptEchoStr(encodingAESKey, echostr string) ([]byte, error) {
 	}
 	cipherText = cipherText[:len(cipherText)-pad]
 
-	// 【修复点 1】类型强制转换
-	// 必须把 uint32 转为 int，否则编译报错 "mismatched types int and uint32"
 	msgLen := binary.BigEndian.Uint32(cipherText[16:20])
 	return cipherText[20 : 20+int(msgLen)], nil
 }
@@ -264,8 +293,6 @@ func sendToWeChat(conf Config, data map[string]interface{}) {
 	body, _ := json.Marshal(payload)
 	postURL := fmt.Sprintf("%s/cgi-bin/message/send?access_token=%s", baseURL, token)
 
-	// 【修复点 2】恢复 io 读取
-	// 之前直接调用 http.Post 忽略了返回值，导致 import "io" 报错 "unused import"
 	resp, err := http.Post(postURL, "application/json", bytes.NewBuffer(body))
 	if err != nil {
 		log.Println("Push Error:", err)
@@ -273,7 +300,6 @@ func sendToWeChat(conf Config, data map[string]interface{}) {
 	}
 	defer resp.Body.Close()
 	
-	// 这里使用了 io 包，解决了 "imported and not used: io" 的编译错误
 	respBody, _ := io.ReadAll(resp.Body)
 	log.Println("WeChat Response:", string(respBody))
 }
